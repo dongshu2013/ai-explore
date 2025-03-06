@@ -15,13 +15,17 @@ class FluxInference:
         # GPU memory optimizations
         torch.cuda.empty_cache()
         gc.collect()
-        torch.cuda.set_per_process_memory_fraction(0.95)
         
-        # Enable pinned memory for faster CPU->GPU transfers
+        # Enable performance optimizations
         torch.backends.cudnn.benchmark = True
+        
         if torch.cuda.is_available():
-            # Reserve pinned memory for faster data transfer
-            torch.cuda.set_per_process_memory_fraction(0.8)  # Leave some memory for pinned allocations
+            # Use maximum available VRAM (95% to leave some headroom)
+            torch.cuda.set_per_process_memory_fraction(0.95)
+            
+            # Enable pinned memory for faster CPU->GPU transfers
+            # (This uses CPU RAM, not GPU VRAM)
+            torch.set_float32_matmul_precision('high')
 
     def initialize_model(self):
         try:
@@ -43,7 +47,7 @@ class FluxInference:
 
                 # Try to import xformers first
                 try:
-                    import xformers  # noqa: F401
+                    import xformers
                     self.model.enable_xformers_memory_efficient_attention()
                     print("Using xformers for memory-efficient attention")
                 except ImportError:
