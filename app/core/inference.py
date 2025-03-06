@@ -1,10 +1,9 @@
 import gc
 import torch
 from diffusers import StableDiffusionPipeline
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any
 import base64
 from io import BytesIO
-from PIL import Image
 
 class FluxInference:
     def __init__(self):
@@ -17,15 +16,42 @@ class FluxInference:
         torch.cuda.empty_cache()
         gc.collect()
         torch.cuda.set_per_process_memory_fraction(0.95)
+        
+        # Enable pinned memory for faster CPU->GPU transfers
+        torch.backends.cudnn.benchmark = True
+        if torch.cuda.is_available():
+            # Reserve pinned memory for faster data transfer
+            torch.cuda.set_per_process_memory_fraction(0.8)  # Leave some memory for pinned allocations
 
     def initialize_model(self):
         try:
+            # Enable CPU offloading for memory efficiency
             self.model = StableDiffusionPipeline.from_pretrained(
                 "runwayml/stable-diffusion-v1-5",
-                torch_dtype=torch.float16
+                torch_dtype=torch.float16,
+                use_safetensors=True,
+                variant="fp16",
+                use_flash_attention_2=True,  # Enable Flash Attention 2
             )
+            
             if torch.cuda.is_available():
-                self.model = self.model.to("cuda")
+                # Enable sequential CPU<->GPU offloading
+                self.model.enable_model_cpu_offload()
+
+                # Enable attention slicing for lower memory usage
+                self.model.enable_attention_slicing(slice_size="auto")
+
+                # Try to import xformers first
+                try:
+                    import xformers  # noqa: F401
+                    self.model.enable_xformers_memory_efficient_attention()
+                    print("Using xformers for memory-efficient attention")
+                except ImportError:
+                    print("Xformers not installed, using standard attention mechanisms")
+                except Exception as e:
+                    print(f"Error enabling xformers: {e}")
+            else:
+                print("CUDA not available, running on CPU only")
         except Exception as e:
             print(f"Error initializing model: {str(e)}")
             raise
@@ -42,15 +68,24 @@ class FluxInference:
         if self.model is None:
             raise RuntimeError("Model not initialized")
 
-        image = self.model(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale
-        ).images[0]
+        # Clear cache before generation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        with torch.inference_mode():
+            image = self.model(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                height=height,
+                width=width,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale
+            ).images[0]
         
+        # Clear cache after generation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         # Convert to base64 if requested
         if output_format == "b64":
             buffered = BytesIO()
