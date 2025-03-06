@@ -4,6 +4,7 @@ from diffusers import StableDiffusionPipeline
 from typing import Optional, Dict, Any
 import base64
 from io import BytesIO
+import os
 
 class FluxInference:
     def __init__(self):
@@ -29,13 +30,15 @@ class FluxInference:
 
     def initialize_model(self):
         try:
-            # Enable CPU offloading for memory efficiency
+            # Get model path from environment variable or use default
+            model_path = os.environ.get("MODEL_PATH", "runwayml/stable-diffusion-v1-5")
+            
             self.model = StableDiffusionPipeline.from_pretrained(
-                "runwayml/stable-diffusion-v1-5",
+                model_path,
                 torch_dtype=torch.float16,
                 use_safetensors=True,
                 variant="fp16",
-                use_flash_attention_2=True,  # Enable Flash Attention 2
+                use_flash_attention_2=True,
             )
             
             if torch.cuda.is_available():
